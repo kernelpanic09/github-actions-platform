@@ -1,5 +1,9 @@
 # github-actions-platform
 
+[![License: MIT](https://img.shields.io/github/license/kernelpanic09/github-actions-platform)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/kernelpanic09/github-actions-platform?include_prereleases&sort=semver)](https://github.com/kernelpanic09/github-actions-platform/releases)
+[![Last commit](https://img.shields.io/github/last-commit/kernelpanic09/github-actions-platform)](https://github.com/kernelpanic09/github-actions-platform/commits)
+
 Every team writes the same CI/CD boilerplate. This is a small library of reusable GitHub Actions workflows and composite actions for the common platform tasks: Terraform plan/apply, Docker build and push, Helm deploy, container scanning, and release automation.
 
 The goal is a single place to fix things once. When Trivy adds a new flag, when cosign changes its signing flow, when Terraform releases a new version with a different init flag, you fix it here and all callers get the update on their next run.
