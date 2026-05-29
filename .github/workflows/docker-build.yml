@@ -1,0 +1,175 @@
+name: Docker Build (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Image name without registry prefix (e.g. myorg/myapp)"
+        type: string
+        required: true
+      dockerfile:
+        description: "Path to Dockerfile, relative to context"
+        type: string
+        required: false
+        default: "Dockerfile"
+      context:
+        description: "Docker build context path"
+        type: string
+        required: false
+        default: "."
+      platforms:
+        description: "Comma-separated list of target platforms"
+        type: string
+        required: false
+        default: "linux/amd64"
+      registry:
+        description: "Target registry: ecr or ghcr"
+        type: string
+        required: false
+        default: "ghcr"
+      aws_role_arn:
+        description: "IAM role ARN to assume via OIDC (required when registry=ecr)"
+        type: string
+        required: false
+        default: ""
+      aws_region:
+        description: "AWS region for ECR"
+        type: string
+        required: false
+        default: "us-east-1"
+      sign:
+        description: "Sign the image with cosign keyless signing"
+        type: boolean
+        required: false
+        default: true
+      build_args:
+        description: "Newline-separated list of build-time variables (KEY=VALUE)"
+        type: string
+        required: false
+        default: ""
+
+    outputs:
+      image_digest:
+        description: "SHA256 digest of the pushed image"
+        value: ${{ jobs.build.outputs.image_digest }}
+      image_uri:
+        description: "Full image URI including digest"
+        value: ${{ jobs.build.outputs.image_uri }}
+
+jobs:
+  build:
+    name: Build and push
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write   # OIDC for ECR auth and cosign keyless signing
+      contents: read
+      packages: write   # GHCR push
+
+    outputs:
+      image_digest: ${{ steps.push.outputs.digest }}
+      image_uri: ${{ steps.push.outputs.imageid }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assume AWS role (ECR only)
+        if: inputs.registry == 'ecr'
+        uses: kernelpanic09/github-actions-platform/actions/aws-oidc-assume@main
+        with:
+          role_arn: ${{ inputs.aws_role_arn }}
+          region: ${{ inputs.aws_region }}
+
+      - name: Derive ECR registry URL
+        if: inputs.registry == 'ecr'
+        id: ecr-url
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "registry=${ACCOUNT_ID}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ECR
+        if: inputs.registry == 'ecr'
+        run: |
+          aws ecr get-login-password --region ${{ inputs.aws_region }} \
+            | docker login --username AWS --password-stdin \
+              ${{ steps.ecr-url.outputs.registry }}
+
+      - name: Log in to GHCR
+        if: inputs.registry == 'ghcr'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          BRANCH=$(echo "${{ github.ref_name }}" | sed 's|/|-|g')
+
+          if [[ "${{ inputs.registry }}" == "ecr" ]]; then
+            REGISTRY="${{ steps.ecr-url.outputs.registry }}"
+          else
+            REGISTRY="ghcr.io/${{ github.repository_owner }}"
+          fi
+
+          BASE="${REGISTRY}/${{ inputs.image_name }}"
+          TAGS="${BASE}:sha-${SHORT_SHA},${BASE}:${BRANCH}"
+
+          # Tag latest only on the default branch
+          if [[ "${{ github.ref }}" == "refs/heads/${{ github.event.repository.default_branch }}" ]]; then
+            TAGS="${TAGS},${BASE}:latest"
+          fi
+
+          # Tag semver if this is a release tag (v1.2.3)
+          if [[ "${{ github.ref }}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            TAGS="${TAGS},${BASE}:${{ github.ref_name }}"
+          fi
+
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.context }}/${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: ${{ inputs.build_args }}
+          # Layer cache speeds up repeat builds of the same branch
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        if: inputs.sign == true
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image
+        if: inputs.sign == true
+        # Keyless signing uses the OIDC token from the workflow job identity.
+        # The signature is stored in the same registry alongside the image.
+        run: |
+          cosign sign --yes \
+            "${{ steps.tags.outputs.base }}@${{ steps.push.outputs.digest }}"
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+
+      - name: Summary
+        run: |
+          echo "## Docker build" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Registry | ${{ inputs.registry }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Digest | \`${{ steps.push.outputs.digest }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Platforms | ${{ inputs.platforms }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Signed | ${{ inputs.sign }} |" >> "$GITHUB_STEP_SUMMARY"

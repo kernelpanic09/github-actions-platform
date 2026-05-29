@@ -1,0 +1,133 @@
+name: Trivy Scan (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      scan_type:
+        description: "Scan type: image, fs, or config"
+        type: string
+        required: false
+        default: "fs"
+      target:
+        description: "What to scan. For image: full image URI. For fs/config: path in the repo."
+        type: string
+        required: false
+        default: "."
+      trivy_version:
+        description: "Trivy version to install"
+        type: string
+        required: false
+        default: "0.52.2"
+      severity:
+        description: "Comma-separated list of severities to report"
+        type: string
+        required: false
+        default: "HIGH,CRITICAL"
+      exit_code:
+        description: "Exit code when vulnerabilities are found (0 to report-only, 1 to fail the job)"
+        type: number
+        required: false
+        default: 1
+      post_pr_comment:
+        description: "Post a summary of findings to the PR"
+        type: boolean
+        required: false
+        default: true
+      ignore_unfixed:
+        description: "Ignore vulnerabilities with no available fix"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  scan:
+    name: Trivy (${{ inputs.scan_type }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write  # SARIF upload to GitHub Security tab
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Trivy
+        uses: kernelpanic09/github-actions-platform/actions/setup-tooling@main
+        with:
+          trivy_version: ${{ inputs.trivy_version }}
+
+      - name: Run Trivy scan (SARIF output)
+        id: trivy-sarif
+        # Always upload SARIF regardless of exit_code setting so findings appear in Security tab
+        run: |
+          set +e
+          IGNORE_ARG=""
+          [[ "${{ inputs.ignore_unfixed }}" == "true" ]] && IGNORE_ARG="--ignore-unfixed"
+
+          trivy ${{ inputs.scan_type }} \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity "${{ inputs.severity }}" \
+            ${IGNORE_ARG} \
+            --exit-code 0 \
+            ${{ inputs.target }}
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-${{ inputs.scan_type }}
+
+      - name: Run Trivy scan (table output for PR comment)
+        id: trivy-table
+        if: inputs.post_pr_comment == true && github.event_name == 'pull_request'
+        run: |
+          set +e
+          IGNORE_ARG=""
+          [[ "${{ inputs.ignore_unfixed }}" == "true" ]] && IGNORE_ARG="--ignore-unfixed"
+
+          trivy ${{ inputs.scan_type }} \
+            --format table \
+            --severity "${{ inputs.severity }}" \
+            ${IGNORE_ARG} \
+            --exit-code 0 \
+            ${{ inputs.target }} 2>&1 | tee trivy-table.txt
+          echo "table_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Post findings to PR
+        if: inputs.post_pr_comment == true && github.event_name == 'pull_request'
+        uses: kernelpanic09/github-actions-platform/actions/pr-comment@main
+        with:
+          marker: "trivy-${{ inputs.scan_type }}-${{ inputs.target }}"
+          body: |
+            ### Trivy scan: ${{ inputs.scan_type }} / `${{ inputs.target }}`
+
+            Severity filter: `${{ inputs.severity }}`
+
+            <details>
+            <summary>Findings</summary>
+
+            ```
+            ${{ steps.trivy-table.outputs.table_content }}
+            ```
+
+            </details>
+
+            Full results are in the [Security tab](../../security/code-scanning).
+
+      - name: Enforce exit code
+        # Run trivy a final time with the caller's desired exit code.
+        # This is separate so the SARIF upload and PR comment always happen first.
+        run: |
+          set +e
+          IGNORE_ARG=""
+          [[ "${{ inputs.ignore_unfixed }}" == "true" ]] && IGNORE_ARG="--ignore-unfixed"
+
+          trivy ${{ inputs.scan_type }} \
+            --format table \
+            --severity "${{ inputs.severity }}" \
+            ${IGNORE_ARG} \
+            --exit-code ${{ inputs.exit_code }} \
+            ${{ inputs.target }}

@@ -1,0 +1,192 @@
+name: Terraform (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: "Path to the Terraform root module, relative to repo root"
+        type: string
+        required: true
+      terraform_version:
+        description: "Terraform version to install (e.g. 1.8.5)"
+        type: string
+        required: false
+        default: "1.8.5"
+      aws_role_arn:
+        description: "IAM role ARN to assume via OIDC"
+        type: string
+        required: true
+      aws_region:
+        description: "AWS region"
+        type: string
+        required: false
+        default: "us-east-1"
+      environment:
+        description: "GitHub environment name to use for apply (enables approval gates)"
+        type: string
+        required: false
+        default: ""
+      apply:
+        description: "Whether to run terraform apply (set true only on main/protected branches)"
+        type: boolean
+        required: false
+        default: false
+
+    outputs:
+      plan_changes:
+        description: "true if the plan contains any changes"
+        value: ${{ jobs.plan.outputs.plan_changes }}
+      apply_outputs:
+        description: "JSON-encoded terraform output map (only set when apply runs)"
+        value: ${{ jobs.apply.outputs.apply_outputs }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    outputs:
+      plan_changes: ${{ steps.summary.outputs.has_changes }}
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assume AWS role
+        uses: kernelpanic09/github-actions-platform/actions/aws-oidc-assume@main
+        with:
+          role_arn: ${{ inputs.aws_role_arn }}
+          region: ${{ inputs.aws_region }}
+
+      - name: Install Terraform
+        uses: kernelpanic09/github-actions-platform/actions/setup-tooling@main
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Cache .terraform directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.working_directory }}/.terraform
+          # Cache key includes the lockfile so a provider version bump busts the cache
+          key: terraform-${{ inputs.working_directory }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working_directory)) }}
+          restore-keys: |
+            terraform-${{ inputs.working_directory }}-
+
+      - name: Format check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Init
+        id: init
+        run: terraform init -input=false
+
+      - name: Validate
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Plan
+        id: plan
+        # -detailed-exitcode: exit 0 = no changes, exit 1 = error, exit 2 = changes present
+        run: |
+          set +e
+          terraform plan \
+            -input=false \
+            -no-color \
+            -detailed-exitcode \
+            -out=tfplan.binary \
+            2>&1 | tee plan.txt
+          EXITCODE=${PIPESTATUS[0]}
+          echo "exitcode=${EXITCODE}" >> "$GITHUB_OUTPUT"
+          if [[ "$EXITCODE" == "1" ]]; then
+            echo "::error::terraform plan failed"
+            exit 1
+          fi
+
+      - name: Convert plan to JSON
+        # Only needed when there are changes (exitcode 2)
+        if: steps.plan.outputs.exitcode == '2'
+        run: terraform show -json tfplan.binary > tfplan.json
+
+      - name: Generate plan summary
+        id: summary
+        uses: kernelpanic09/github-actions-platform/actions/terraform-plan-summary@main
+        with:
+          plan_file_path: ${{ inputs.working_directory }}/tfplan.json
+          plan_text_path: ${{ inputs.working_directory }}/plan.txt
+          fmt_failed: ${{ steps.fmt.outcome == 'failure' }}
+
+      - name: Post plan comment
+        if: github.event_name == 'pull_request'
+        uses: kernelpanic09/github-actions-platform/actions/pr-comment@main
+        with:
+          # Marker includes the working directory so multiple Terraform root modules
+          # in the same repo each get their own comment rather than overwriting each other
+          marker: "terraform-plan-${{ inputs.working_directory }}"
+          body: ${{ steps.summary.outputs.summary }}
+
+  apply:
+    name: Apply
+    # Only run apply when the caller explicitly requests it and the plan job succeeded
+    needs: plan
+    if: inputs.apply == true && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+
+    # Use the environment input to gate on GitHub environment protection rules
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      apply_outputs: ${{ steps.outputs.outputs.json }}
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assume AWS role
+        uses: kernelpanic09/github-actions-platform/actions/aws-oidc-assume@main
+        with:
+          role_arn: ${{ inputs.aws_role_arn }}
+          region: ${{ inputs.aws_region }}
+
+      - name: Install Terraform
+        uses: kernelpanic09/github-actions-platform/actions/setup-tooling@main
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Restore .terraform cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.working_directory }}/.terraform
+          key: terraform-${{ inputs.working_directory }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working_directory)) }}
+          restore-keys: |
+            terraform-${{ inputs.working_directory }}-
+
+      - name: Init
+        run: terraform init -input=false
+
+      - name: Apply
+        run: terraform apply -input=false -auto-approve -no-color
+
+      - name: Capture outputs
+        id: outputs
+        run: |
+          OUTPUTS=$(terraform output -json)
+          echo "json=${OUTPUTS}" >> "$GITHUB_OUTPUT"

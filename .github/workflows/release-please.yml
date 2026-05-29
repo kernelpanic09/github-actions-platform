@@ -1,0 +1,70 @@
+name: Release Please (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      release_type:
+        description: "Release type: node, python, terraform, go, or simple"
+        type: string
+        required: false
+        default: "simple"
+      package_name:
+        description: "Package name used in the changelog and release notes"
+        type: string
+        required: false
+        default: ""
+      config_file:
+        description: "Path to release-please-config.json (leave empty to use default behavior)"
+        type: string
+        required: false
+        default: ""
+      manifest_file:
+        description: "Path to .release-please-manifest.json (leave empty to use default)"
+        type: string
+        required: false
+        default: ""
+      target_branch:
+        description: "Branch to open the release PR against"
+        type: string
+        required: false
+        default: "main"
+
+    outputs:
+      release_created:
+        description: "true if a new release was created"
+        value: ${{ jobs.release-please.outputs.release_created }}
+      tag_name:
+        description: "The git tag of the new release (e.g. v1.2.3)"
+        value: ${{ jobs.release-please.outputs.tag_name }}
+      version:
+        description: "The release version without the v prefix (e.g. 1.2.3)"
+        value: ${{ jobs.release-please.outputs.version }}
+      upload_url:
+        description: "GitHub Release upload URL (for attaching assets)"
+        value: ${{ jobs.release-please.outputs.upload_url }}
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write       # Create release tags and commits
+      pull-requests: write  # Open and update release PRs
+
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+      version: ${{ steps.rp.outputs.version }}
+      upload_url: ${{ steps.rp.outputs.upload_url }}
+
+    steps:
+      - name: Run release-please
+        id: rp
+        uses: googleapis/release-please-action@v4
+        with:
+          release-type: ${{ inputs.release_type }}
+          package-name: ${{ inputs.package_name }}
+          target-branch: ${{ inputs.target_branch }}
+          config-file: ${{ inputs.config_file }}
+          manifest-file: ${{ inputs.manifest_file }}

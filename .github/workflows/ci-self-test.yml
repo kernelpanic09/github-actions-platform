@@ -1,0 +1,236 @@
+name: CI self-test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # Validate all action.yml files are valid YAML and have required fields.
+  # This job doesn't need credentials and runs quickly.
+  validate-action-metadata:
+    name: Validate action metadata
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Check action.yml files
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          for action_file in actions/*/action.yml; do
+            echo "Checking ${action_file}..."
+
+            # Must be valid YAML
+            if ! yq '.' "${action_file}" > /dev/null 2>&1; then
+              echo "::error file=${action_file}::Invalid YAML"
+              ERRORS=$((ERRORS+1))
+              continue
+            fi
+
+            # Required top-level fields
+            for field in name description author runs; do
+              val=$(yq ".${field}" "${action_file}")
+              if [[ "$val" == "null" || -z "$val" ]]; then
+                echo "::error file=${action_file}::Missing required field: ${field}"
+                ERRORS=$((ERRORS+1))
+              fi
+            done
+
+            # Must be a composite action
+            using=$(yq '.runs.using' "${action_file}")
+            if [[ "$using" != "composite" ]]; then
+              echo "::error file=${action_file}::runs.using must be 'composite', got: ${using}"
+              ERRORS=$((ERRORS+1))
+            fi
+
+            # Every run step must have shell: bash
+            missing_shell=$(yq '.runs.steps[] | select(.run != null) | select(.shell == null) | .name' "${action_file}")
+            if [[ -n "$missing_shell" ]]; then
+              echo "::error file=${action_file}::Step(s) missing shell: bash: ${missing_shell}"
+              ERRORS=$((ERRORS+1))
+            fi
+
+            echo "  OK"
+          done
+
+          if [[ "$ERRORS" -gt 0 ]]; then
+            echo "::error::${ERRORS} validation error(s) found"
+            exit 1
+          fi
+
+  # Validate all reusable workflows are valid YAML.
+  validate-workflow-yaml:
+    name: Validate workflow YAML
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Check workflow files
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          for wf in .github/workflows/*.yml; do
+            echo "Checking ${wf}..."
+            if ! yq '.' "${wf}" > /dev/null 2>&1; then
+              echo "::error file=${wf}::Invalid YAML"
+              ERRORS=$((ERRORS+1))
+            else
+              echo "  OK"
+            fi
+          done
+
+          if [[ "$ERRORS" -gt 0 ]]; then
+            exit 1
+          fi
+
+  # Exercise the setup-tooling composite action.
+  # This is the most basic smoke test: if the action installs tools correctly,
+  # the binaries will be on PATH and the version commands will succeed.
+  test-setup-tooling:
+    name: Test setup-tooling
+    runs-on: ubuntu-latest
+    needs: [validate-action-metadata]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install all tools
+        uses: ./actions/setup-tooling
+        with:
+          terraform_version: "1.8.5"
+          helm_version: "3.15.2"
+          kubectl_version: "1.30.2"
+          trivy_version: "0.52.2"
+
+      - name: Verify terraform
+        run: terraform version
+
+      - name: Verify helm
+        run: helm version
+
+      - name: Verify kubectl
+        run: kubectl version --client
+
+      - name: Verify trivy
+        run: trivy --version
+
+  # Exercise the pr-comment composite action.
+  # Uses a workflow_dispatch path so we can test without a real PR.
+  test-pr-comment:
+    name: Test pr-comment (dry run)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: [validate-action-metadata]
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Post test comment
+        uses: ./actions/pr-comment
+        with:
+          marker: "ci-self-test-pr-comment"
+          body: |
+            ### CI self-test comment
+
+            This comment was posted by the `ci-self-test` workflow to verify the `pr-comment` action.
+            It will be updated (not duplicated) on each run.
+
+  # Exercise the terraform-plan-summary action with a synthetic plan file.
+  test-terraform-plan-summary:
+    name: Test terraform-plan-summary
+    runs-on: ubuntu-latest
+    needs: [validate-action-metadata]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create synthetic tfplan.json
+        run: |
+          cat > /tmp/tfplan.json << 'EOF'
+          {
+            "format_version": "1.2",
+            "resource_changes": [
+              {
+                "address": "aws_instance.web",
+                "change": { "actions": ["create"] }
+              },
+              {
+                "address": "aws_security_group.web",
+                "change": { "actions": ["update"] }
+              },
+              {
+                "address": "aws_instance.old",
+                "change": { "actions": ["delete"] }
+              }
+            ]
+          }
+          EOF
+
+      - name: Run terraform-plan-summary
+        id: summary
+        uses: ./actions/terraform-plan-summary
+        with:
+          plan_file_path: /tmp/tfplan.json
+
+      - name: Verify outputs
+        run: |
+          echo "has_changes: ${{ steps.summary.outputs.has_changes }}"
+          echo "summary length: ${#SUMMARY}"
+          [[ "${{ steps.summary.outputs.has_changes }}" == "true" ]] || {
+            echo "::error::expected has_changes=true"
+            exit 1
+          }
+        env:
+          SUMMARY: ${{ steps.summary.outputs.summary }}
+
+  # Check that all example workflows reference tags or @main, not bare SHAs.
+  check-example-pinning:
+    name: Check example pinning
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check examples reference @main or a version tag
+        run: |
+          set -euo pipefail
+          ERRORS=0
+          for f in examples/**/.github/workflows/*.yml; do
+            [[ -f "$f" ]] || continue
+            # Warn if examples reference a specific SHA (40-char hex) instead of a named ref
+            if grep -qE 'uses:.*@[0-9a-f]{40}' "$f"; then
+              echo "::warning file=${f}::Example uses a full SHA. Prefer @v1 or @main."
+            fi
+          done

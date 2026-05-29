@@ -1,0 +1,231 @@
+name: Helm Deploy (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      chart_path:
+        description: "Path to the Helm chart directory, relative to repo root"
+        type: string
+        required: true
+      release_name:
+        description: "Helm release name"
+        type: string
+        required: true
+      namespace:
+        description: "Kubernetes namespace to deploy into"
+        type: string
+        required: true
+      cluster_name:
+        description: "EKS cluster name (used when aws_role_arn is set)"
+        type: string
+        required: false
+        default: ""
+      aws_role_arn:
+        description: "IAM role ARN to assume via OIDC for EKS auth. Leave empty if using kubeconfig_secret."
+        type: string
+        required: false
+        default: ""
+      aws_region:
+        description: "AWS region for EKS"
+        type: string
+        required: false
+        default: "us-east-1"
+      kubeconfig_secret:
+        description: "Name of the repository secret holding a kubeconfig. Used when not targeting EKS."
+        type: string
+        required: false
+        default: ""
+      helm_version:
+        description: "Helm version to install"
+        type: string
+        required: false
+        default: "3.15.2"
+      values_files:
+        description: "Newline-separated list of values file paths (relative to repo root)"
+        type: string
+        required: false
+        default: ""
+      set_values:
+        description: "Newline-separated list of --set overrides (KEY=VALUE)"
+        type: string
+        required: false
+        default: ""
+      image_tag:
+        description: "Image tag to deploy. Sets image.tag via --set if provided."
+        type: string
+        required: false
+        default: ""
+      wait:
+        description: "Wait for all resources to be ready before marking the job successful"
+        type: boolean
+        required: false
+        default: true
+      timeout:
+        description: "Timeout for helm install/upgrade --wait"
+        type: string
+        required: false
+        default: "5m"
+      atomic:
+        description: "Roll back automatically if the upgrade fails"
+        type: boolean
+        required: false
+        default: true
+      dry_run:
+        description: "Run helm upgrade with --dry-run (does not deploy)"
+        type: boolean
+        required: false
+        default: false
+
+    outputs:
+      release_revision:
+        description: "Helm release revision after the upgrade"
+        value: ${{ jobs.deploy.outputs.release_revision }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: kernelpanic09/github-actions-platform/actions/setup-tooling@main
+        with:
+          helm_version: ${{ inputs.helm_version }}
+
+      - name: Helm lint
+        run: helm lint ${{ inputs.chart_path }}
+
+      - name: Helm template (dry-run render)
+        # Catch template errors before we touch the cluster
+        run: |
+          VALUES_ARGS=""
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            VALUES_ARGS="${VALUES_ARGS} -f ${f}"
+          done <<< "${{ inputs.values_files }}"
+
+          SET_ARGS=""
+          while IFS= read -r s; do
+            [[ -z "$s" ]] && continue
+            SET_ARGS="${SET_ARGS} --set ${s}"
+          done <<< "${{ inputs.set_values }}"
+
+          [[ -n "${{ inputs.image_tag }}" ]] && SET_ARGS="${SET_ARGS} --set image.tag=${{ inputs.image_tag }}"
+
+          helm template ${{ inputs.release_name }} ${{ inputs.chart_path }} \
+            --namespace ${{ inputs.namespace }} \
+            ${VALUES_ARGS} \
+            ${SET_ARGS} \
+            > /dev/null
+
+  deploy:
+    name: Deploy
+    needs: lint
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    outputs:
+      release_revision: ${{ steps.deploy.outputs.revision }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: kernelpanic09/github-actions-platform/actions/setup-tooling@main
+        with:
+          helm_version: ${{ inputs.helm_version }}
+
+      - name: Configure kubeconfig (OIDC / EKS)
+        if: inputs.aws_role_arn != ''
+        run: |
+          # Assume the role first so aws eks update-kubeconfig works
+          true  # aws-oidc-assume is a composite action called below
+
+      - name: Assume AWS role
+        if: inputs.aws_role_arn != ''
+        uses: kernelpanic09/github-actions-platform/actions/aws-oidc-assume@main
+        with:
+          role_arn: ${{ inputs.aws_role_arn }}
+          region: ${{ inputs.aws_region }}
+
+      - name: Update kubeconfig for EKS
+        if: inputs.aws_role_arn != '' && inputs.cluster_name != ''
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ inputs.aws_region }} \
+            --name ${{ inputs.cluster_name }}
+
+      - name: Configure kubeconfig (secret)
+        if: inputs.kubeconfig_secret != ''
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets[inputs.kubeconfig_secret] }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Ensure namespace exists
+        run: kubectl get namespace ${{ inputs.namespace }} || kubectl create namespace ${{ inputs.namespace }}
+
+      - name: Helm upgrade / install
+        id: deploy
+        run: |
+          set -euo pipefail
+
+          VALUES_ARGS=""
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            VALUES_ARGS="${VALUES_ARGS} -f ${f}"
+          done <<< "${{ inputs.values_files }}"
+
+          SET_ARGS=""
+          while IFS= read -r s; do
+            [[ -z "$s" ]] && continue
+            SET_ARGS="${SET_ARGS} --set ${s}"
+          done <<< "${{ inputs.set_values }}"
+
+          [[ -n "${{ inputs.image_tag }}" ]] && SET_ARGS="${SET_ARGS} --set image.tag=${{ inputs.image_tag }}"
+          [[ "${{ inputs.wait }}" == "true" ]] && WAIT_ARGS="--wait --timeout ${{ inputs.timeout }}" || WAIT_ARGS=""
+          [[ "${{ inputs.atomic }}" == "true" ]] && ATOMIC_ARG="--atomic" || ATOMIC_ARG=""
+          [[ "${{ inputs.dry_run }}" == "true" ]] && DRY_ARG="--dry-run" || DRY_ARG=""
+
+          helm upgrade ${{ inputs.release_name }} ${{ inputs.chart_path }} \
+            --install \
+            --namespace ${{ inputs.namespace }} \
+            --create-namespace \
+            ${VALUES_ARGS} \
+            ${SET_ARGS} \
+            ${WAIT_ARGS} \
+            ${ATOMIC_ARG} \
+            ${DRY_ARG} \
+            --history-max 10
+
+          REVISION=$(helm list -n ${{ inputs.namespace }} \
+            --filter "^${{ inputs.release_name }}$" \
+            --output json | jq -r '.[0].revision')
+          echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
+
+      - name: Post deployment summary
+        if: github.event_name == 'pull_request'
+        uses: kernelpanic09/github-actions-platform/actions/pr-comment@main
+        with:
+          marker: "helm-deploy-${{ inputs.release_name }}-${{ inputs.namespace }}"
+          body: |
+            ### Helm deploy: ${{ inputs.release_name }}
+
+            | | |
+            |---|---|
+            | Namespace | `${{ inputs.namespace }}` |
+            | Chart | `${{ inputs.chart_path }}` |
+            | Revision | `${{ steps.deploy.outputs.revision }}` |
+            | Image tag | `${{ inputs.image_tag || 'chart default' }}` |
+            | Dry run | `${{ inputs.dry_run }}` |

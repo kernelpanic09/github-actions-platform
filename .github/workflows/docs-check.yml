@@ -1,0 +1,107 @@
+name: Docs check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check-action-readmes:
+    name: Check action READMEs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify each action has a README
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          for action_dir in actions/*/; do
+            readme="${action_dir}README.md"
+            if [[ ! -f "$readme" ]]; then
+              echo "::error::Missing README: ${readme}"
+              ERRORS=$((ERRORS+1))
+            fi
+          done
+
+          if [[ "$ERRORS" -gt 0 ]]; then
+            exit 1
+          fi
+
+  check-docs-coverage:
+    name: Check docs coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify all actions are documented in docs/actions.md
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          for action_dir in actions/*/; do
+            action_name=$(basename "$action_dir")
+            if ! grep -q "${action_name}" docs/actions.md; then
+              echo "::error::${action_name} is not documented in docs/actions.md"
+              ERRORS=$((ERRORS+1))
+            fi
+          done
+
+          if [[ "$ERRORS" -gt 0 ]]; then
+            exit 1
+          fi
+
+      - name: Verify all reusable workflows are documented in docs/workflows.md
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          # Only check files that have workflow_call triggers (the reusable ones)
+          for wf in .github/workflows/*.yml; do
+            if grep -q 'workflow_call' "$wf"; then
+              wf_name=$(basename "$wf")
+              if ! grep -q "${wf_name}" docs/workflows.md; then
+                echo "::error::${wf_name} is not documented in docs/workflows.md"
+                ERRORS=$((ERRORS+1))
+              fi
+            fi
+          done
+
+          if [[ "$ERRORS" -gt 0 ]]; then
+            exit 1
+          fi
+
+  check-example-workflows:
+    name: Check examples parse correctly
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Validate example workflow YAML
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          find examples -name '*.yml' | while read -r f; do
+            if ! yq '.' "$f" > /dev/null 2>&1; then
+              echo "::error file=${f}::Invalid YAML"
+              ERRORS=$((ERRORS+1))
+            fi
+          done
+
+          exit $ERRORS
