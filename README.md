@@ -131,6 +131,13 @@ To test a new action locally before opening a PR, use [act](https://github.com/n
 act workflow_dispatch -W .github/workflows/ci-self-test.yml
 ```
 
+## Related Projects
+
+- [terraform-aws-modules](https://github.com/kernelpanic09/terraform-aws-modules) — pairs naturally with the `terraform.yml` reusable workflow here. The `iam-roles` module produces a GitHub Actions OIDC role, and this library handles the plan/apply pipeline that consumes it.
+- [mcp-server-aws](https://github.com/kernelpanic09/mcp-server-aws) — uses `release-please.yml` from this library for its release automation, so changelogs and tags are handled consistently.
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

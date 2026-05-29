@@ -1,5 +1,7 @@
 # Contributing
 
+Pull requests are welcome. This is a personal portfolio project, so for anything bigger than a bug fix or a tweak to an existing workflow, please open an issue first to discuss the approach. Breaking changes to workflow interfaces affect every caller, so those need a bit more care.
+
 ## Adding a new reusable workflow
 
 1. Create `.github/workflows/<name>.yml` with `on: workflow_call`.
