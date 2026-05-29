@@ -1,0 +1,47 @@
+name: Terraform
+
+# This is an example of calling the terraform reusable workflow from an infra repo.
+# Copy this file into your infra repo and adjust the inputs.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/**"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  # Deploy staging on every PR
+  staging:
+    uses: kernelpanic09/github-actions-platform/.github/workflows/terraform.yml@v1
+    with:
+      working_directory: ./infra/staging
+      terraform_version: "1.8.5"
+      aws_role_arn: arn:aws:iam::123456789012:role/github-actions-terraform-staging
+      aws_region: us-east-1
+      environment: staging
+      # Apply on push to main (not on PRs)
+      apply: ${{ github.event_name == 'push' }}
+
+  # Deploy production only after staging succeeds, with a manual approval gate.
+  # The "production" GitHub environment is configured to require a review before
+  # the apply job runs.
+  production:
+    needs: staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: kernelpanic09/github-actions-platform/.github/workflows/terraform.yml@v1
+    with:
+      working_directory: ./infra/prod
+      terraform_version: "1.8.5"
+      aws_role_arn: arn:aws:iam::123456789012:role/github-actions-terraform-prod
+      aws_region: us-east-1
+      environment: production
+      apply: true

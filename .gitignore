@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Terraform (don't commit plans or state to this repo)
+*.tfplan
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Test artifacts
+test-results/
+*.sarif
+
+# Node (if any local tooling is added)
+node_modules/

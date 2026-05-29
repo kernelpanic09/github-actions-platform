@@ -1,0 +1,67 @@
+name: Deploy microservice
+
+# Example of a microservice that builds a Docker image and deploys it via Helm.
+# Both reusable workflows are called as separate jobs so the image digest is
+# available as an input to the helm deploy.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+  pull-requests: write
+  security-events: write
+
+jobs:
+  scan-code:
+    uses: kernelpanic09/github-actions-platform/.github/workflows/trivy-scan.yml@v1
+    with:
+      scan_type: fs
+      target: .
+      severity: HIGH,CRITICAL
+      exit_code: 1
+
+  build:
+    needs: scan-code
+    uses: kernelpanic09/github-actions-platform/.github/workflows/docker-build.yml@v1
+    with:
+      image_name: myorg/payments-service
+      registry: ecr
+      aws_role_arn: arn:aws:iam::123456789012:role/github-actions-ecr-push
+      aws_region: us-east-1
+      sign: true
+
+  scan-image:
+    needs: build
+    uses: kernelpanic09/github-actions-platform/.github/workflows/trivy-scan.yml@v1
+    with:
+      scan_type: image
+      target: ${{ needs.build.outputs.image_uri }}
+      severity: HIGH,CRITICAL
+      # Don't fail the pipeline on image scan in PR; report only
+      exit_code: ${{ github.event_name == 'push' && 1 || 0 }}
+      post_pr_comment: true
+
+  deploy-staging:
+    needs: [build, scan-image]
+    if: github.event_name == 'push'
+    uses: kernelpanic09/github-actions-platform/.github/workflows/helm-deploy.yml@v1
+    with:
+      chart_path: ./chart
+      release_name: payments-service
+      namespace: payments
+      cluster_name: my-eks-cluster
+      aws_role_arn: arn:aws:iam::123456789012:role/github-actions-eks-deploy
+      aws_region: us-east-1
+      values_files: |
+        chart/values.yaml
+        chart/values-staging.yaml
+      image_tag: sha-${{ github.sha }}
+      wait: true
+      timeout: 10m
+      atomic: true

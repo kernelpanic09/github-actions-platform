@@ -1,0 +1,19 @@
+version: 2
+
+updates:
+  # Keep GitHub Actions up to date.
+  # Dependabot opens PRs for new versions of actions used in this repo's own CI.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      # Group all actions/* updates into a single PR to reduce noise
+      actions-deps:
+        patterns:
+          - "actions/*"
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"

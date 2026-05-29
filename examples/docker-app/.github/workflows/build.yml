@@ -1,0 +1,44 @@
+name: Build and push
+
+# Example of calling the docker-build reusable workflow from an application repo.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write  # needed for GHCR push
+
+jobs:
+  build:
+    uses: kernelpanic09/github-actions-platform/.github/workflows/docker-build.yml@v1
+    with:
+      image_name: myorg/myapp
+      dockerfile: Dockerfile
+      context: .
+      platforms: linux/amd64,linux/arm64
+      registry: ghcr
+      sign: true
+      build_args: |
+        APP_VERSION=${{ github.ref_name }}
+
+  # After building, scan the pushed image
+  scan:
+    needs: build
+    uses: kernelpanic09/github-actions-platform/.github/workflows/trivy-scan.yml@v1
+    with:
+      scan_type: image
+      target: ${{ needs.build.outputs.image_uri }}
+      severity: HIGH,CRITICAL
+      exit_code: 1
+      post_pr_comment: true
+
+    permissions:
+      security-events: write
+      contents: read
+      pull-requests: write

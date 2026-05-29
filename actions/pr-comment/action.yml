@@ -1,0 +1,80 @@
+name: Post or Update PR Comment
+description: >
+  Post a markdown comment to the current pull request, or update the existing
+  comment if one with the same marker already exists. Uses a hidden HTML marker
+  so it never posts duplicate comments.
+author: kernelpanic09
+
+branding:
+  icon: message-square
+  color: blue
+
+inputs:
+  marker:
+    description: >
+      Unique string identifying this comment. Used as a hidden HTML anchor.
+      Use a descriptive slug like "terraform-plan-infra/prod" so multiple
+      modules in the same repo each get their own comment.
+    required: true
+  body:
+    description: "Markdown content for the comment body"
+    required: true
+  token:
+    description: "GitHub token with pull-requests: write permission"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  comment_id:
+    description: "ID of the created or updated comment"
+    value: ${{ steps.upsert.outputs.comment_id }}
+
+runs:
+  using: composite
+
+  steps:
+    - name: Post or update comment
+      id: upsert
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        MARKER: ${{ inputs.marker }}
+        BODY: ${{ inputs.body }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+
+        # The marker is embedded as a hidden HTML comment at the top of the body.
+        # GitHub renders HTML comments as invisible, so users don't see the marker,
+        # but we can search for it with the API to find existing comments.
+        HIDDEN_MARKER="<!-- actions-platform-comment:${MARKER} -->"
+        FULL_BODY="${HIDDEN_MARKER}
+        ${BODY}"
+
+        # Look for an existing comment with the marker
+        EXISTING_ID=$(gh api \
+          "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+          --paginate \
+          --jq ".[] | select(.body | startswith(\"${HIDDEN_MARKER}\")) | .id" \
+          | head -n1)
+
+        if [[ -n "$EXISTING_ID" ]]; then
+          # Update the existing comment
+          gh api \
+            --method PATCH \
+            "repos/${REPO}/issues/comments/${EXISTING_ID}" \
+            --field body="${FULL_BODY}" \
+            --jq '.id' > /tmp/comment_id
+          echo "Updated comment ${EXISTING_ID}"
+        else
+          # Create a new comment
+          gh api \
+            --method POST \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --field body="${FULL_BODY}" \
+            --jq '.id' > /tmp/comment_id
+          echo "Created new comment"
+        fi
+
+        echo "comment_id=$(cat /tmp/comment_id)" >> "$GITHUB_OUTPUT"

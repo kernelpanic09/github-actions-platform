@@ -1,0 +1,168 @@
+name: Setup Platform Tooling
+description: >
+  Install terraform, helm, kubectl, and/or trivy at pinned versions with
+  tool-level caching. Only installs tools you ask for.
+author: kernelpanic09
+
+branding:
+  icon: tool
+  color: gray-dark
+
+inputs:
+  terraform_version:
+    description: "Terraform version to install (e.g. 1.8.5). Leave empty to skip."
+    required: false
+    default: ""
+  helm_version:
+    description: "Helm version to install (e.g. 3.15.2). Leave empty to skip."
+    required: false
+    default: ""
+  kubectl_version:
+    description: "kubectl version to install (e.g. 1.30.2). Leave empty to skip."
+    required: false
+    default: ""
+  trivy_version:
+    description: "Trivy version to install (e.g. 0.52.2). Leave empty to skip."
+    required: false
+    default: ""
+
+outputs:
+  terraform_path:
+    description: "Absolute path to the terraform binary (empty if not installed)"
+    value: ${{ steps.terraform-path.outputs.path }}
+  helm_path:
+    description: "Absolute path to the helm binary (empty if not installed)"
+    value: ${{ steps.helm-path.outputs.path }}
+
+runs:
+  using: composite
+
+  steps:
+    # Terraform
+    - name: Restore terraform from cache
+      if: inputs.terraform_version != ''
+      id: cache-terraform
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/bin/terraform
+        key: terraform-${{ inputs.terraform_version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install terraform
+      if: inputs.terraform_version != '' && steps.cache-terraform.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION="${{ inputs.terraform_version }}"
+        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        URL="https://releases.hashicorp.com/terraform/${VERSION}/terraform_${VERSION}_linux_${ARCH}.zip"
+        curl -fsSL "$URL" -o /tmp/terraform.zip
+        unzip -q /tmp/terraform.zip -d /tmp/terraform-bin
+        mkdir -p ~/.local/bin
+        mv /tmp/terraform-bin/terraform ~/.local/bin/terraform
+        chmod +x ~/.local/bin/terraform
+        rm -f /tmp/terraform.zip
+
+    - name: Add terraform to PATH
+      if: inputs.terraform_version != ''
+      shell: bash
+      run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Capture terraform path
+      id: terraform-path
+      shell: bash
+      run: |
+        if [[ -n "${{ inputs.terraform_version }}" ]]; then
+          echo "path=$(which terraform 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+        else
+          echo "path=" >> "$GITHUB_OUTPUT"
+        fi
+
+    # Helm
+    - name: Restore helm from cache
+      if: inputs.helm_version != ''
+      id: cache-helm
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/bin/helm
+        key: helm-${{ inputs.helm_version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install helm
+      if: inputs.helm_version != '' && steps.cache-helm.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION="${{ inputs.helm_version }}"
+        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        URL="https://get.helm.sh/helm-v${VERSION}-linux-${ARCH}.tar.gz"
+        curl -fsSL "$URL" | tar -xz --strip-components=1 -C /tmp linux-${ARCH}/helm
+        mkdir -p ~/.local/bin
+        mv /tmp/helm ~/.local/bin/helm
+        chmod +x ~/.local/bin/helm
+
+    - name: Add helm to PATH
+      if: inputs.helm_version != ''
+      shell: bash
+      run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Capture helm path
+      id: helm-path
+      shell: bash
+      run: |
+        if [[ -n "${{ inputs.helm_version }}" ]]; then
+          echo "path=$(which helm 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+        else
+          echo "path=" >> "$GITHUB_OUTPUT"
+        fi
+
+    # kubectl
+    - name: Restore kubectl from cache
+      if: inputs.kubectl_version != ''
+      id: cache-kubectl
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/bin/kubectl
+        key: kubectl-${{ inputs.kubectl_version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install kubectl
+      if: inputs.kubectl_version != '' && steps.cache-kubectl.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION="${{ inputs.kubectl_version }}"
+        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        URL="https://dl.k8s.io/release/v${VERSION}/bin/linux/${ARCH}/kubectl"
+        mkdir -p ~/.local/bin
+        curl -fsSL "$URL" -o ~/.local/bin/kubectl
+        chmod +x ~/.local/bin/kubectl
+
+    - name: Add kubectl to PATH
+      if: inputs.kubectl_version != ''
+      shell: bash
+      run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    # Trivy
+    - name: Restore trivy from cache
+      if: inputs.trivy_version != ''
+      id: cache-trivy
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/bin/trivy
+        key: trivy-${{ inputs.trivy_version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install trivy
+      if: inputs.trivy_version != '' && steps.cache-trivy.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION="${{ inputs.trivy_version }}"
+        ARCH=$(uname -m | sed 's/x86_64/64bit/;s/aarch64/ARM64/')
+        URL="https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/trivy_${VERSION}_Linux-${ARCH}.tar.gz"
+        curl -fsSL "$URL" | tar -xz -C /tmp trivy
+        mkdir -p ~/.local/bin
+        mv /tmp/trivy ~/.local/bin/trivy
+        chmod +x ~/.local/bin/trivy
+
+    - name: Add trivy to PATH
+      if: inputs.trivy_version != ''
+      shell: bash
+      run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"

@@ -1,0 +1,95 @@
+name: Platform release
+
+# Full-stack example: infrastructure + container + Helm deploy + release automation.
+#
+# Flow:
+#   1. release-please opens a release PR from conventional commits
+#   2. On merge to main: terraform applies infra, builds + scans the image, deploys via Helm
+#   3. On version tag: release-please creates the GitHub release
+#
+# This kind of pipeline fits a team that owns both infra and app code in a monorepo.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: write        # release-please needs write to create release commits
+  pull-requests: write
+  packages: write
+  security-events: write
+
+jobs:
+  # Keep releases in sync with conventional commits
+  release:
+    uses: kernelpanic09/github-actions-platform/.github/workflows/release-please.yml@v1
+    with:
+      release_type: simple
+      package_name: platform-service
+
+  # Scan IaC on every PR and push
+  scan-iac:
+    uses: kernelpanic09/github-actions-platform/.github/workflows/trivy-scan.yml@v1
+    with:
+      scan_type: config
+      target: ./infra
+      severity: HIGH,CRITICAL
+      exit_code: 0    # warn only on IaC issues; don't block deploys
+      post_pr_comment: true
+
+  # Apply infrastructure before deploying the app so schema migrations and
+  # resource dependencies are in place
+  infra:
+    needs: scan-iac
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: kernelpanic09/github-actions-platform/.github/workflows/terraform.yml@v1
+    with:
+      working_directory: ./infra
+      terraform_version: "1.8.5"
+      aws_role_arn: arn:aws:iam::123456789012:role/github-actions-terraform
+      aws_region: us-east-1
+      environment: production
+      apply: true
+
+  build:
+    needs: scan-iac
+    uses: kernelpanic09/github-actions-platform/.github/workflows/docker-build.yml@v1
+    with:
+      image_name: myorg/platform-service
+      registry: ecr
+      aws_role_arn: arn:aws:iam::123456789012:role/github-actions-ecr-push
+      aws_region: us-east-1
+      platforms: linux/amd64
+      sign: true
+
+  scan-image:
+    needs: build
+    uses: kernelpanic09/github-actions-platform/.github/workflows/trivy-scan.yml@v1
+    with:
+      scan_type: image
+      target: ${{ needs.build.outputs.image_uri }}
+      severity: HIGH,CRITICAL
+      exit_code: 1
+
+  deploy:
+    needs: [infra, build, scan-image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: kernelpanic09/github-actions-platform/.github/workflows/helm-deploy.yml@v1
+    with:
+      chart_path: ./chart
+      release_name: platform-service
+      namespace: platform
+      cluster_name: prod-cluster
+      aws_role_arn: arn:aws:iam::123456789012:role/github-actions-eks-deploy
+      aws_region: us-east-1
+      values_files: |
+        chart/values.yaml
+        chart/values-prod.yaml
+      image_tag: sha-${{ github.sha }}
+      wait: true
+      timeout: 10m
+      atomic: true

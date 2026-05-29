@@ -1,0 +1,139 @@
+name: kubectl Deploy
+description: >
+  Apply a set of Kubernetes manifests and wait for any Deployments in the
+  applied set to finish rolling out. Prints the rollout status before exiting.
+author: kernelpanic09
+
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  manifests:
+    description: >
+      Space-separated glob patterns for manifest files to apply
+      (e.g. "k8s/*.yml" or "k8s/deployment.yml k8s/service.yml").
+    required: true
+  namespace:
+    description: "Kubernetes namespace to apply into. Overrides any namespace in the manifests."
+    required: false
+    default: ""
+  wait:
+    description: "Wait for Deployments to finish rolling out before the step succeeds"
+    required: false
+    default: "true"
+  timeout:
+    description: "Timeout for rollout wait (kubectl rollout status --timeout)"
+    required: false
+    default: "5m"
+  dry_run:
+    description: "Run kubectl apply --dry-run=server (validates manifests without applying)"
+    required: false
+    default: "false"
+  prune:
+    description: "Pass --prune to remove resources no longer in the manifest set"
+    required: false
+    default: "false"
+  prune_allowlist:
+    description: >
+      Comma-separated list of resource kinds to include in pruning
+      (e.g. core/v1/ConfigMap,apps/v1/Deployment). Only used when prune=true.
+    required: false
+    default: ""
+
+outputs:
+  applied_resources:
+    description: "Newline-separated list of resources that were applied"
+    value: ${{ steps.apply.outputs.applied_resources }}
+
+runs:
+  using: composite
+
+  steps:
+    - name: Apply manifests
+      id: apply
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        NS_ARGS=""
+        [[ -n "${{ inputs.namespace }}" ]] && NS_ARGS="--namespace ${{ inputs.namespace }}"
+
+        DRY_ARG=""
+        [[ "${{ inputs.dry_run }}" == "true" ]] && DRY_ARG="--dry-run=server"
+
+        PRUNE_ARGS=""
+        if [[ "${{ inputs.prune }}" == "true" ]]; then
+          PRUNE_ARGS="--prune"
+          if [[ -n "${{ inputs.prune_allowlist }}" ]]; then
+            # Convert comma-separated list to repeated --prune-allowlist flags
+            while IFS=',' read -ra KINDS; do
+              for KIND in "${KINDS[@]}"; do
+                PRUNE_ARGS="${PRUNE_ARGS} --prune-allowlist=${KIND}"
+              done
+            done <<< "${{ inputs.prune_allowlist }}"
+          fi
+        fi
+
+        # Expand globs from the inputs string
+        MANIFEST_FILES=""
+        for PATTERN in ${{ inputs.manifests }}; do
+          for FILE in $PATTERN; do
+            [[ -f "$FILE" ]] || { echo "::warning::No file matched: ${PATTERN}"; continue; }
+            MANIFEST_FILES="${MANIFEST_FILES} -f ${FILE}"
+          done
+        done
+
+        if [[ -z "$MANIFEST_FILES" ]]; then
+          echo "::error::No manifest files found for pattern(s): ${{ inputs.manifests }}"
+          exit 1
+        fi
+
+        APPLIED=$(kubectl apply \
+          ${NS_ARGS} \
+          ${DRY_ARG} \
+          ${PRUNE_ARGS} \
+          ${MANIFEST_FILES} \
+          2>&1)
+
+        echo "$APPLIED"
+
+        # Extract the list of applied resource names for the output
+        RESOURCES=$(echo "$APPLIED" | grep -E '(created|configured|unchanged)' | awk '{print $1}' || true)
+        {
+          echo "applied_resources<<RESOURCES_EOF"
+          echo "$RESOURCES"
+          echo "RESOURCES_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Wait for Deployments to roll out
+      if: inputs.wait == 'true' && inputs.dry_run == 'false'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        NS_ARGS=""
+        [[ -n "${{ inputs.namespace }}" ]] && NS_ARGS="--namespace ${{ inputs.namespace }}"
+
+        # Find every Deployment in the applied manifests and wait for it
+        DEPLOYMENTS=""
+        for PATTERN in ${{ inputs.manifests }}; do
+          for FILE in $PATTERN; do
+            [[ -f "$FILE" ]] || continue
+            # Extract Deployment names from the manifest files
+            DEPS=$(grep -A1 'kind: Deployment' "$FILE" | grep 'name:' | awk '{print $2}' || true)
+            DEPLOYMENTS="${DEPLOYMENTS} ${DEPS}"
+          done
+        done
+
+        if [[ -z "$(echo $DEPLOYMENTS | tr -d ' ')" ]]; then
+          echo "No Deployments found in manifest set. Skipping rollout wait."
+          exit 0
+        fi
+
+        for DEP in $DEPLOYMENTS; do
+          echo "Waiting for rollout: deployment/${DEP}"
+          kubectl rollout status deployment/"${DEP}" \
+            ${NS_ARGS} \
+            --timeout="${{ inputs.timeout }}"
+        done

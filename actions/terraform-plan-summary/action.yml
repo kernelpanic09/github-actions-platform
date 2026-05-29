@@ -1,0 +1,152 @@
+name: Terraform Plan Summary
+description: >
+  Parse a terraform plan JSON file and generate a markdown summary with
+  resource counts and a collapsible diff. Designed to feed into the
+  pr-comment action.
+author: kernelpanic09
+
+branding:
+  icon: file-text
+  color: purple
+
+inputs:
+  plan_file_path:
+    description: >
+      Absolute or relative path to the tfplan JSON file produced by
+      `terraform show -json tfplan.binary`. If the file doesn't exist
+      (because the plan had no changes), has_changes will be false.
+    required: true
+  plan_text_path:
+    description: >
+      Absolute or relative path to the raw plan text output (from
+      `terraform plan ... | tee plan.txt`). Used for the collapsible
+      detail block. If not provided, the detail block is omitted.
+    required: false
+    default: ""
+  fmt_failed:
+    description: "Set to true to prepend a format warning to the summary"
+    required: false
+    default: "false"
+
+outputs:
+  summary:
+    description: "Markdown string summarizing the plan"
+    value: ${{ steps.parse.outputs.summary }}
+  has_changes:
+    description: "true if the plan contains any resource changes"
+    value: ${{ steps.parse.outputs.has_changes }}
+  added:
+    description: "Number of resources to be created"
+    value: ${{ steps.parse.outputs.added }}
+  changed:
+    description: "Number of resources to be updated"
+    value: ${{ steps.parse.outputs.changed }}
+  destroyed:
+    description: "Number of resources to be destroyed"
+    value: ${{ steps.parse.outputs.destroyed }}
+
+runs:
+  using: composite
+
+  steps:
+    - name: Parse plan and build summary
+      id: parse
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        PLAN_FILE="${{ inputs.plan_file_path }}"
+        FMT_FAILED="${{ inputs.fmt_failed }}"
+
+        # When the plan has no changes, terraform exits 0 and we never write tfplan.json
+        if [[ ! -f "$PLAN_FILE" ]]; then
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          echo "added=0"           >> "$GITHUB_OUTPUT"
+          echo "changed=0"         >> "$GITHUB_OUTPUT"
+          echo "destroyed=0"       >> "$GITHUB_OUTPUT"
+
+          SUMMARY="### Terraform plan\n\nNo changes. Infrastructure is up to date."
+          if [[ "$FMT_FAILED" == "true" ]]; then
+            SUMMARY=":warning: **terraform fmt check failed** — run \`terraform fmt -recursive\` locally.\n\n${SUMMARY}"
+          fi
+          # Write multiline output using the EOF delimiter approach
+          {
+            echo "summary<<SUMMARY_EOF"
+            printf '%b' "$SUMMARY"
+            echo ""
+            echo "SUMMARY_EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Parse the JSON plan for resource change counts
+        ADDED=$(jq '[.resource_changes[]? | select(.change.actions | contains(["create"]))] | length' "$PLAN_FILE")
+        CHANGED=$(jq '[.resource_changes[]? | select(.change.actions | contains(["update"]))] | length' "$PLAN_FILE")
+        DESTROYED=$(jq '[.resource_changes[]? | select(.change.actions | contains(["delete"]))] | length' "$PLAN_FILE")
+        REPLACED=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' "$PLAN_FILE")
+
+        echo "has_changes=true"   >> "$GITHUB_OUTPUT"
+        echo "added=${ADDED}"     >> "$GITHUB_OUTPUT"
+        echo "changed=${CHANGED}" >> "$GITHUB_OUTPUT"
+        echo "destroyed=${DESTROYED}" >> "$GITHUB_OUTPUT"
+
+        # Build the list of changed resources
+        CHANGES_LIST=$(jq -r '
+          .resource_changes[]?
+          | select(.change.actions != ["no-op"])
+          | "| `\(.address)` | \(.change.actions | join(", ")) |"
+        ' "$PLAN_FILE" | head -50)
+
+        # Build the markdown. Use a temp file to avoid quoting nightmares.
+        TMP=$(mktemp)
+
+        if [[ "$FMT_FAILED" == "true" ]]; then
+          echo ":warning: **terraform fmt check failed** — run \`terraform fmt -recursive\` locally." >> "$TMP"
+          echo "" >> "$TMP"
+        fi
+
+        echo "### Terraform plan" >> "$TMP"
+        echo "" >> "$TMP"
+        echo "| | Count |" >> "$TMP"
+        echo "|---|---|" >> "$TMP"
+        echo "| :green_circle: Add | ${ADDED} |" >> "$TMP"
+        echo "| :yellow_circle: Change | ${CHANGED} |" >> "$TMP"
+        echo "| :red_circle: Destroy | ${DESTROYED} |" >> "$TMP"
+        if [[ "$REPLACED" -gt 0 ]]; then
+          echo "| :arrows_counterclockwise: Replace | ${REPLACED} |" >> "$TMP"
+        fi
+        echo "" >> "$TMP"
+
+        if [[ -n "$CHANGES_LIST" ]]; then
+          echo "<details>" >> "$TMP"
+          echo "<summary>Changed resources</summary>" >> "$TMP"
+          echo "" >> "$TMP"
+          echo "| Resource | Action |" >> "$TMP"
+          echo "|---|---|" >> "$TMP"
+          echo "$CHANGES_LIST" >> "$TMP"
+          echo "" >> "$TMP"
+          echo "</details>" >> "$TMP"
+          echo "" >> "$TMP"
+        fi
+
+        # Append the raw plan text if provided
+        PLAN_TEXT_PATH="${{ inputs.plan_text_path }}"
+        if [[ -n "$PLAN_TEXT_PATH" && -f "$PLAN_TEXT_PATH" ]]; then
+          echo "<details>" >> "$TMP"
+          echo "<summary>Full plan output</summary>" >> "$TMP"
+          echo "" >> "$TMP"
+          echo '```hcl' >> "$TMP"
+          # Cap at 200 lines to stay under GitHub's comment size limit
+          head -200 "$PLAN_TEXT_PATH" >> "$TMP"
+          echo '```' >> "$TMP"
+          echo "" >> "$TMP"
+          echo "</details>" >> "$TMP"
+        fi
+
+        {
+          echo "summary<<SUMMARY_EOF"
+          cat "$TMP"
+          echo "SUMMARY_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        rm -f "$TMP"
