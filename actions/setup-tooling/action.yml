@@ -22,7 +22,7 @@ inputs:
     required: false
     default: ""
   trivy_version:
-    description: "Trivy version to install (e.g. 0.52.2). Leave empty to skip."
+    description: "Trivy version to install (e.g. 0.69.3). Leave empty to skip."
     required: false
     default: ""
 
