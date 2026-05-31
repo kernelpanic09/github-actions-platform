@@ -1,5 +1,6 @@
 # github-actions-platform
 
+[![CI](https://github.com/kernelpanic09/github-actions-platform/actions/workflows/ci-self-test.yml/badge.svg)](https://github.com/kernelpanic09/github-actions-platform/actions/workflows/ci-self-test.yml)
 [![License: MIT](https://img.shields.io/github/license/kernelpanic09/github-actions-platform)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/kernelpanic09/github-actions-platform?include_prereleases&sort=semver)](https://github.com/kernelpanic09/github-actions-platform/releases)
 [![Last commit](https://img.shields.io/github/last-commit/kernelpanic09/github-actions-platform)](https://github.com/kernelpanic09/github-actions-platform/commits)
