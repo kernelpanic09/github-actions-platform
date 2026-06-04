@@ -16,7 +16,7 @@ All examples pin `@v1`. Use `@main` only when testing unreleased changes.
 ## Using an example
 
 1. Copy the workflow file(s) from the example's `.github/workflows/` into your repo.
-2. Set the required secrets/variables (most use AWS OIDC — see the repo
+2. Set the required secrets/variables (most use AWS OIDC - see the repo
    [OIDC setup](../docs/oidc-setup.md)).
 3. Adjust inputs (image name, cluster, working directory) to match your project.
 
