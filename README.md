@@ -136,6 +136,8 @@ act workflow_dispatch -W .github/workflows/ci-self-test.yml
 
 - [terraform-aws-modules](https://github.com/kernelpanic09/terraform-aws-modules) - pairs naturally with the `terraform.yml` reusable workflow here. The `iam-roles` module produces a GitHub Actions OIDC role, and this library handles the plan/apply pipeline that consumes it.
 - [mcp-server-aws](https://github.com/kernelpanic09/mcp-server-aws) - uses `release-please.yml` from this library for its release automation, so changelogs and tags are handled consistently.
+- [k8s-ai-operator](https://github.com/kernelpanic09/k8s-ai-operator) - a Go operator that consumes the `docker-build.yml` and `release-please.yml` workflows for image builds and tagged releases.
+- [agents-platform](https://github.com/kernelpanic09/agents-platform) - an AI orchestration platform whose own CI mirrors the patterns collected here.
 
 ---
 
