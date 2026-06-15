@@ -67,7 +67,7 @@ To scope to a specific GitHub environment (recommended for production roles):
 
 ## 3. Attach a permission policy to the role
 
-Attach only the permissions the workflow needs. For Terraform managing S3 and EC2:
+Attach only the permissions the workflow needs. For Terraform using the S3 backend with DynamoDB state locking:
 
 ```json
 {
