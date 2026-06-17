@@ -61,7 +61,7 @@ jobs:
     steps:
       - name: Run release-please
         id: rp
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           release-type: ${{ inputs.release_type }}
           package-name: ${{ inputs.package_name }}
