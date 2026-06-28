@@ -17,7 +17,7 @@ inputs:
     required: false
     default: "us-east-1"
   role_session_name:
-    description: "Session name for the assumed role. Defaults to github-actions-<run_id>."
+    description: "Session name for the assumed role. Defaults to github-actions-<run_id>-<run_attempt>."
     required: false
     default: ""
   role_duration_seconds:
