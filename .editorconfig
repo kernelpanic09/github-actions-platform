@@ -1,0 +1,31 @@
+# EditorConfig helps keep a consistent coding style across editors and IDEs.
+# https://editorconfig.org
+# Mirrors the "Code style" section in CONTRIBUTING.md.
+root = true
+
+# Defaults for every file
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# YAML: 2-space indent, no tabs (workflows and composite actions)
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Shell scripts embedded via `run:` follow the same 2-space convention
+[*.sh]
+indent_style = space
+indent_size = 2
+
+# Markdown: keep trailing whitespace, since two trailing spaces mean a line break
+[*.md]
+trim_trailing_whitespace = false
+
+# Makefiles require real tabs
+[Makefile]
+indent_style = tab

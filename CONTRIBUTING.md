@@ -64,3 +64,5 @@ Callers that pin `@v1` are protected from major version changes. Callers on `@ma
 - Shell steps: `set -euo pipefail` where the logic is non-trivial
 - Comments explain why, not what
 - Don't repeat GitHub's own documentation in comments; link to it instead
+
+An [`.editorconfig`](.editorconfig) in the repo root encodes these rules (indent, charset, final newline) so most editors apply them automatically.
