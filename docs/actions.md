@@ -16,7 +16,7 @@ Only tools with a non-empty version input are installed.
     terraform_version: "1.8.5"
     helm_version: "3.15.2"
     kubectl_version: "1.30.2"
-    trivy_version: "0.52.2"
+    trivy_version: "0.69.3"
 ```
 
 ### Inputs

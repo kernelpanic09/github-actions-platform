@@ -11,7 +11,7 @@ Install terraform, helm, kubectl, and trivy at pinned versions. Only installs wh
     terraform_version: "1.8.5"
     helm_version: "3.15.2"
     kubectl_version: "1.30.2"
-    trivy_version: "0.52.2"
+    trivy_version: "0.69.3"
 ```
 
 You don't need to install all four. Any input left empty is skipped:
