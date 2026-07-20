@@ -91,7 +91,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Helm
         uses: kernelpanic09/github-actions-platform/actions/setup-tooling@main
@@ -139,7 +139,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Helm
         uses: kernelpanic09/github-actions-platform/actions/setup-tooling@main
