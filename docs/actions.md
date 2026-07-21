@@ -26,7 +26,7 @@ Only tools with a non-empty version input are installed.
 | `terraform_version` | No | `""` | Terraform version (e.g. `1.8.5`) |
 | `helm_version` | No | `""` | Helm version (e.g. `3.15.2`) |
 | `kubectl_version` | No | `""` | kubectl version (e.g. `1.30.2`) |
-| `trivy_version` | No | `""` | Trivy version (e.g. `0.52.2`) |
+| `trivy_version` | No | `""` | Trivy version (e.g. `0.69.3`) |
 
 ### Outputs
 
