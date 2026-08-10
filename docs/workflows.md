@@ -167,7 +167,7 @@ permissions:
 ### Notes
 
 - SARIF is always uploaded regardless of `exit_code`, so findings appear in the Security tab even when you pass `exit_code: 0`.
-- The job runs Trivy twice: once for SARIF (always exit 0), once to enforce the `exit_code` setting. The table output for the PR comment is a third invocation.
+- The job always runs Trivy twice: once for SARIF (always exit 0) and once to enforce the `exit_code` setting. When `post_pr_comment=true` and the trigger is a pull request, a third invocation generates the table output for the PR comment.
 
 ---
 
