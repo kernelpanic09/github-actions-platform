@@ -49,7 +49,7 @@ Dry run (validate without applying):
 | `timeout` | No | `5m` | Rollout wait timeout |
 | `dry_run` | No | `false` | Run with `--dry-run=server` |
 | `prune` | No | `false` | Pass `--prune` to remove unlisted resources |
-| `prune_allowlist` | No | `""` | Comma-separated resource kinds for pruning |
+| `prune_allowlist` | No | `""` | Comma-separated resource kinds for pruning in `group/version/kind` format (e.g. `core/v1/ConfigMap,apps/v1/Deployment`). Only used when `prune: "true"`. |
 
 ## Outputs
 
