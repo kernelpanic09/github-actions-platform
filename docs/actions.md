@@ -77,13 +77,17 @@ See [oidc-setup.md](oidc-setup.md) for the IAM trust policy.
 Post a markdown comment on the current PR, or update it if a comment with the same marker already exists. Prevents duplicate comments on repeated pushes to the same branch.
 
 ```yaml
-- uses: kernelpanic09/github-actions-platform/actions/pr-comment@v1
-  with:
-    marker: "terraform-plan-infra/prod"
-    body: |
-      ### Terraform plan
+permissions:
+  pull-requests: write
 
-      3 to add, 0 to change, 0 to destroy.
+steps:
+  - uses: kernelpanic09/github-actions-platform/actions/pr-comment@v1
+    with:
+      marker: "terraform-plan-infra/prod"
+      body: |
+        ### Terraform plan
+
+        3 to add, 0 to change, 0 to destroy.
 ```
 
 ### Inputs
