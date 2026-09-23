@@ -1,0 +1,9 @@
+# Force LF line endings on checkout, regardless of platform or a
+# contributor's core.autocrlf setting. .editorconfig only guides editors
+# that honor it; this is enforced by Git itself at checkout/commit time.
+#
+# It matters here specifically because every composite action embeds bash
+# directly in action.yml `run:` blocks. A CRLF pulled in via a Windows
+# checkout doesn't just show up as a diff noise - it breaks the script at
+# runtime (e.g. `set -euo pipefail\r` => "set: invalid option").
+* text=auto eol=lf
