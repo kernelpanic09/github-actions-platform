@@ -49,8 +49,10 @@ runs:
         # GitHub renders HTML comments as invisible, so users don't see the marker,
         # but we can search for it with the API to find existing comments.
         HIDDEN_MARKER="<!-- actions-platform-comment:${MARKER} -->"
-        FULL_BODY="${HIDDEN_MARKER}
-        ${BODY}"
+        # Join with printf rather than a literal multi-line string: the latter bakes
+        # this script's own indentation onto the first line of BODY, which Markdown
+        # then renders as a code block instead of normal text.
+        FULL_BODY=$(printf '%s\n%s' "$HIDDEN_MARKER" "$BODY")
 
         # Look for an existing comment with the marker
         EXISTING_ID=$(gh api \
