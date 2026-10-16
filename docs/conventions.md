@@ -17,6 +17,9 @@ Naming conventions used across this library for inputs, outputs, secrets, and ma
 - `<thing>_uri`: full URI including scheme.
 - `<thing>_digest`: content-addressed hash (e.g. `sha256:abc123...`).
 - `<thing>_outputs`: JSON-encoded map.
+- Counts use the bare past-participle (`added`, `changed`, `destroyed`) and are integer strings.
+
+All outputs are strings, so compare booleans and counts as strings in `if:` expressions (e.g. `steps.plan.outputs.has_changes == 'true'`).
 
 ## Secret naming
 
