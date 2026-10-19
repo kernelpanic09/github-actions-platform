@@ -1,0 +1,6 @@
+# Default owner for everything; review is requested automatically on PRs.
+* @kernelpanic09
+
+# Composite actions are the public interface of this repo.
+/actions/ @kernelpanic09
+/.github/workflows/ @kernelpanic09
